@@ -5,6 +5,7 @@ import requests
 from xml.etree import ElementTree as ET
 
 
+INTERVAL = 15
 USER_AGENT = 'midtbustrack/0.1 (https://github.com/Mortal/midtbustrack)'
 LAT = '56.154437121004236'
 LON = '10.204795170878484'
@@ -73,7 +74,8 @@ def main():
         while True:
             append_buses(store, session)
             store.flush()
-            time.sleep(15)
+            sleep = INTERVAL - (time.time() % INTERVAL)
+            time.sleep(sleep)
 
 
 if __name__ == '__main__':

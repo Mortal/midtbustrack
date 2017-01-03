@@ -38,9 +38,9 @@ def parse_bus(bus_element):
         Delay=int,
         Lat=float,
         Lon=float,
-        JourneyId=str,
+        JourneyId=str,  # GUID (fixed length)
         Distance=int,
-        Line=str,
+        Line=str,  # Fixed length (at most 3)
         StartStation=int,
         EndStation=int,
         StartName=str,
@@ -49,9 +49,12 @@ def parse_bus(bus_element):
         EndTime=timestamp,
         DirectionText=str,
     )
+    # These fields have variable-length names
+    SKIP_FIELDS = {'Name', 'StartName', 'EndName', 'DirectionText'}
     attrib = dict(bus_element.items())
-    assert attrib.keys() == FIELDS.keys()
-    return {k: FIELDS[k](v) for k, v in attrib.items()}
+    assert attrib.keys() == FIELDS.keys() | SKIP_FIELDS
+    return {k: FIELDS[k]() if k in SKIP_FIELDS else FIELDS[k](v)
+            for k, v in attrib.items()}
 
 
 def parse_buses(xml):

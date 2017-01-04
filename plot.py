@@ -1,7 +1,4 @@
-from collections import Counter
-
 import datetime
-import numpy as np
 import pyproj
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -15,7 +12,8 @@ RADIUS_SQ = 1e-5
 def project(df):
     index = df.index
     sproj = pyproj.Proj('+init=epsg:3857')
-    dproj = pyproj.Proj('+proj=utm +zone=32 +ellps=WGS84 +datum=WGS84 +units=m +no_defs')
+    dproj = pyproj.Proj(
+        '+proj=utm +zone=32 +ellps=WGS84 +datum=WGS84 +units=m +no_defs')
     x, y = pyproj.transform(sproj, dproj, df.Lon.values, df.Lat.values)
     return (pd.Series(x, index=index, name='x'),
             pd.Series(y, index=index, name='y'))
@@ -100,21 +98,21 @@ def plot_prediction(buses, utm32_position, now):
     plt.show()
 
 
-def predict_bus_times_multi(buses, utm32_position, nows, radius_sq=RADIUS_SQ):
-    journeys = buses.groupby('JourneyId')
-    # print('%s journeys' % len(journeys))
+def close_filter(buses, utm32_position, radius_sq):
     x, y = utm32_position
     buses_x, buses_y = project(buses)
     dx = x - buses_x
     dy = y - buses_y
     dist_sq = dx ** 2 + dy ** 2
     close = dist_sq < radius_sq
+    return close
+
+
+def predict_bus_times_multi(buses, utm32_position, nows, radius_sq=RADIUS_SQ):
+    close = close_filter(buses, utm32_position, radius_sq)
     buses_close = buses[close]
     journey_close_idx = buses_close.groupby('JourneyId').request_time.idxmin()
     journey_close = buses.loc[journey_close_idx].set_index('JourneyId')
-    # journey_close_time = journey_close.request_time
-    # close = buses_dist_sq.dist_sq < radius_sq
-    # journey_dist_sq = buses_dist_sq.groupby('JourneyId').dist_sq
     result = []
     for now in nows:
         journey_close_now = journey_close[journey_close.request_time <= now]
@@ -125,20 +123,20 @@ def predict_bus_times_multi(buses, utm32_position, nows, radius_sq=RADIUS_SQ):
         most_recent = buses[buses.JourneyId == most_recent_journey]
         most_recent_x, most_recent_y = project(most_recent)
 
-        current_journeys = buses[buses.request_time <= now].groupby('JourneyId')
+        current_buses = buses[buses.request_time <= now]
+        current_journeys = current_buses.groupby('JourneyId')
         far_journey_ids = sorted(current_journeys.groups.keys() -
                                  set(close_journey_ids))
-        far_journeys_idx = current_journeys.request_time.idxmax().loc[far_journey_ids]
+        far_journeys_idx = (
+            current_journeys.request_time.idxmax().loc[far_journey_ids])
         far_journeys_point = buses.loc[far_journeys_idx].set_index('JourneyId')
         far_journeys_x, far_journeys_y = project(far_journeys_point)
-        # print(far_journeys_point)
 
         result_now = {}
         recent_threshold = now - datetime.timedelta(seconds=60)
         for journey_id in far_journey_ids:
             t = far_journeys_point.loc[journey_id].Updated
             if t < recent_threshold:
-                # print('Skip %s at time %s' % (journey_id, t))
                 continue
             dx = far_journeys_x[journey_id] - most_recent_x
             dy = far_journeys_y[journey_id] - most_recent_y
@@ -147,14 +145,7 @@ def predict_bus_times_multi(buses, utm32_position, nows, radius_sq=RADIUS_SQ):
             closest_time = buses.loc[closest].Updated
             t_diff = t - closest_time
             predicted = most_recent_point.Updated + t_diff
-            # until = predicted - now
-            # print('%s is behind by %s, expected in %s at %s' %
-            #       (journey_id, t_diff, until, predicted))
             result_now[journey_id] = predicted
-            # journey = buses[buses.JourneyId == journey_id]
-            # show_buses(journey, '')
-            # plt.plot([far_journeys_x[journey_id], most_recent_x[closest]],
-            #          [far_journeys_y[journey_id], most_recent_y[closest]], 'x-b')
         result.append(result_now)
     return result, journey_close.Updated
 
@@ -165,7 +156,8 @@ def main():
         # p = (-505636.59, 56.4725)
         buses = get_buses(store)
         p = (-505636.588946, 56.470429)  # Storcenter Nord
-        # find_most_recent_bus(buses, p, datetime.datetime.now() - datetime.timedelta(hours=1))
+        # find_most_recent_bus(
+        #     buses, p, datetime.datetime.now() - datetime.timedelta(hours=1))
         plot_prediction(buses, p, datetime.datetime.now())
 
 

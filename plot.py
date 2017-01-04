@@ -42,7 +42,8 @@ def find_most_recent_bus(store, utm32_position, now, line='2A', end_station=7514
     buses = buses[buses.EndStation == end_station]
     buses = buses[buses.request_time <= now]
     times = predict_bus_times(buses, utm32_position, now)
-    print(times)
+    for k in sorted(times.keys(), key=lambda k: times[k]):
+        print('%s %s' % (times[k], k))
 
 
 def predict_bus_times(buses, utm32_position, now):

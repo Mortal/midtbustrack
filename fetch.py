@@ -1,3 +1,4 @@
+import re
 import time
 import datetime
 import pandas as pd
@@ -49,25 +50,71 @@ def parse_bus(bus_element):
         EndTime=timestamp,
         DirectionText=str,
     )
-    # These fields have variable-length names
-    SKIP_FIELDS = {'Name', 'StartName', 'EndName', 'DirectionText'}
     attrib = dict(bus_element.items())
-    assert attrib.keys() == FIELDS.keys() | SKIP_FIELDS
-    return {k: FIELDS[k]() if k in SKIP_FIELDS else FIELDS[k](v)
-            for k, v in attrib.items()}
+    assert attrib.keys() == FIELDS.keys()
+    return {k: FIELDS[k](v) for k, v in attrib.items()}
+
+
+def append_rec(store, index, key, rec, attr):
+    store.append(key, pd.DataFrame.from_records([rec], index=[index]))
+    store.get_storer(key).attrs.metadata = attr
+
+
+def slugify(s):
+    return re.sub(r'[^A-Za-z0-9]+', '_', str(s))
+
+
+def bus_key(bus):
+    line = slugify(bus['Line'])
+    journey = slugify(bus['JourneyId'])
+    id = slugify(bus['Id'])
+    fmt = ('/line_{line}/towards_{endstation}/date_{date}/' +
+           'id_{id}/journey_{journey}')
+    return fmt.format(
+        line=line, endstation=bus['EndStation'],
+        date=bus['StartTime'].strftime('%Y_%m_%d'),
+        id=id, journey=journey)
+
+
+def parse_bus_key(key):
+    fmt = ('/line_{line}/towards_{endstation}/date_{date}/' +
+           'id_{id}/journey_{journey}')
+    pattern = re.sub(r'\{([a-z]+)\}', r'(?P<\1>[A-Za-z0-9_]+)', fmt)
+    mo = re.match('^%s$' % pattern, key)
+    if not mo:
+        raise ValueError(key)
+    return mo.groupdict()
+
+
+def append_bus_location(store, bus, request_time):
+    key = bus_key(bus)
+    attr_keys = '''
+    Id Name StartStation EndStation StartName EndName StartTime EndTime
+    DirectionText'''.split()
+    attr = {k: bus[k] for k in attr_keys}
+    rec_keys = 'Updated Delay Lat Lon'.split()
+    rec = {k: bus[k] for k in rec_keys}
+    append_rec(store, request_time, key, rec, attr)
 
 
 def parse_buses(xml):
     assert xml.tag == 'Result'
-    return pd.DataFrame.from_records(
-        [parse_bus(bus) for bus in xml], columns=COLUMNS)
+    return [parse_bus(bus) for bus in xml]
 
 
 def append_buses(store, session):
     session.headers = {'User-Agent': USER_AGENT}
-    buses = parse_buses(get_buses_xml(session))
-    buses['request_time'] = datetime.datetime.now()
-    store.append('buses', buses)
+    t1 = time.time()
+    xml = get_buses_xml(session)
+    t2 = time.time()
+    buses = parse_buses(xml)
+    t3 = time.time()
+    request_time = datetime.datetime.now()
+    for bus in buses:
+        append_bus_location(store, bus, request_time)
+    t4 = time.time()
+    print('HTTP-GET:%4.2f XML-parse:%4.2f append:%4.2f' %
+          (t2-t1, t3-t2, t4-t3))
 
 
 def main():
@@ -76,8 +123,11 @@ def main():
     with store, session:
         while True:
             append_buses(store, session)
+            t1 = time.time()
             store.flush()
+            t2 = time.time()
             sleep = INTERVAL - (time.time() % INTERVAL)
+            print('flush:%4.2f sleep:%5.2f' % (t2 - t1, sleep))
             time.sleep(sleep)
 
 

@@ -7,8 +7,8 @@ from fetch import bus_key
 
 def main():
     attr_keys = '''
-    Id Name StartStation EndStation StartName EndName StartTime EndTime
-    DirectionText'''.split()
+    Id JourneyId Name StartStation EndStation StartName EndName StartTime
+    EndTime DirectionText'''.split()
     rec_keys = 'Updated Delay Lat Lon'.split()
     with pd.HDFStore('input.h5') as input, pd.HDFStore('output.h5') as output:
         groups = input['buses'].groupby('Line EndStation Id JourneyId'.split())

@@ -1,4 +1,5 @@
 import datetime
+import functools
 import pyproj
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -38,12 +39,43 @@ auh = 751421800  # AUH i Skejby
 holme = 751435500  # Holme (Karetmagertoften)
 
 
-def get_buses(store, line='2A', end_station=auh):
-    buses = store['buses'].reset_index()
-    buses = buses[buses.request_time >= timestamp('2017-01-03 16:06:46')]
-    buses = buses[buses.Line == line]
-    buses = buses[buses.EndStation == end_station]
-    return buses
+def h5ls(filename, depth, path=''):
+    if path:
+        assert path.startswith('/')
+        assert not path.endswith('/')
+        arg = filename + path
+        prefix = path + '/'
+    else:
+        arg = filename
+        prefix = ''
+
+    p = subprocess.Popen(
+        ('h5ls', '-r', arg), stdout=subprocess.PIPE,
+        stdin=subprocess.DEVNULL, universal_newlines=True)
+    with p:
+        for line in p.stdout:
+            line = prefix + line.split()[0]
+            if len(line.split('/')) == depth:
+                yield line
+
+
+Journey = collections.namedtuple(
+    'Journey',
+    '''trajectory Id JourneyId Name StartStation EndStation StartName EndName
+    StartTime EndTime DirectionText'''.split())
+
+
+def iter_journeys(filename, store, line='2A', end_station=auh):
+    path = '/line_{line}/towards_{end_station}'.format(
+        line=line, end_station=end_station)
+    for k in h5ls(filename, depth=6, path=path):
+        yield Journey(trajectory=store[k],
+                      **store.get_storer(k).attrs.metadata)
+
+
+@functools.wraps(iter_journeys)
+def get_journeys(*args, **kwargs):
+    return list(iter_journeys(*args, **kwargs))
 
 
 def find_most_recent_bus(buses, utm32_position, now):
@@ -76,11 +108,11 @@ def predict_bus_times(buses, utm32_position, now):
     return result
 
 
-def plot_prediction(buses, utm32_position, now):
+def plot_prediction(journeys, utm32_position, now):
     hours = 10
     nows = [now + datetime.timedelta(seconds=s)
             for s in range(-3600*hours, 0, 60)]
-    result, labels = predict_bus_times_multi(buses, utm32_position, nows)
+    result, labels = predict_bus_times_multi(journeys, utm32_position, nows)
     labels_dict = {i: labels.loc[i] for i in labels.index}
     data = {}
     for now, predictions in zip(nows, result):
@@ -98,9 +130,9 @@ def plot_prediction(buses, utm32_position, now):
     plt.show()
 
 
-def close_filter(buses, utm32_position, radius_sq):
+def close_filter(bus, utm32_position, radius_sq):
     x, y = utm32_position
-    buses_x, buses_y = project(buses)
+    buses_x, buses_y = project(bus)
     dx = x - buses_x
     dy = y - buses_y
     dist_sq = dx ** 2 + dy ** 2
@@ -108,11 +140,20 @@ def close_filter(buses, utm32_position, radius_sq):
     return close
 
 
-def predict_bus_times_multi(buses, utm32_position, nows, radius_sq=RADIUS_SQ):
-    close = close_filter(buses, utm32_position, radius_sq)
-    buses_close = buses[close]
-    journey_close_idx = buses_close.groupby('JourneyId').request_time.idxmin()
-    journey_close = buses.loc[journey_close_idx].set_index('JourneyId')
+def predict_bus_times_multi(journeys, utm32_position, nows, radius_sq=RADIUS_SQ):
+    TODO journeys instead of buses
+    bus_by_journey = {attr['JourneyId']: bus for bus, attr in buses}
+    journey_close = {}
+    for bus, attr in buses:
+        close = bus[close_filter(bus, utm32_position, radius_sq)]
+        if not close.empty:
+            idx = close.index.min()
+            rec = close.loc[idx]
+            rec.request_time = idx
+            journey_close[attr['JourneyId']] = rec
+    journey_close = pd.DataFrame.from_records(journey_close.values(),
+                                              index=journey_close.keys())
+
     result = []
     for now in nows:
         journey_close_now = journey_close[journey_close.request_time <= now]
@@ -120,15 +161,15 @@ def predict_bus_times_multi(buses, utm32_position, nows, radius_sq=RADIUS_SQ):
         most_recent_journey = journey_close_now.request_time.idxmax()
         most_recent_point = journey_close.loc[most_recent_journey]
 
-        most_recent = buses[buses.JourneyId == most_recent_journey]
+        most_recent = bus_by_journey[most_recent_journey]
         most_recent_x, most_recent_y = project(most_recent)
 
-        current_buses = buses[buses.request_time <= now]
+        current_buses = buses[buses.index <= now]
         current_journeys = current_buses.groupby('JourneyId')
         far_journey_ids = sorted(current_journeys.groups.keys() -
                                  set(close_journey_ids))
         far_journeys_idx = (
-            current_journeys.request_time.idxmax().loc[far_journey_ids])
+            current_journeys.index.idxmax().loc[far_journey_ids])
         far_journeys_point = buses.loc[far_journeys_idx].set_index('JourneyId')
         far_journeys_x, far_journeys_y = project(far_journeys_point)
 
@@ -151,14 +192,15 @@ def predict_bus_times_multi(buses, utm32_position, nows, radius_sq=RADIUS_SQ):
 
 
 def main():
-    with pd.HDFStore('midtbustrack.h5') as store:
+    filename = 'midtbustrack.h5'
+    with pd.HDFStore(filename) as store:
         # show_all_buses(store)
         # p = (-505636.59, 56.4725)
-        buses = get_buses(store)
+        journeys = get_journeys(filename, store)
         p = (-505636.588946, 56.470429)  # Storcenter Nord
         # find_most_recent_bus(
         #     buses, p, datetime.datetime.now() - datetime.timedelta(hours=1))
-        plot_prediction(buses, p, datetime.datetime.now())
+        plot_prediction(journeys, p, datetime.datetime.now())
 
 
 if __name__ == '__main__':

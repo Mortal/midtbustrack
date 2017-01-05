@@ -1,3 +1,4 @@
+'''One-off program to convert old store layout to new store layout'''
 import datetime
 import pandas as pd
 

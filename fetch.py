@@ -127,7 +127,9 @@ def main():
             store.flush()
             t2 = time.time()
             sleep = INTERVAL - (time.time() % INTERVAL)
-            print('flush:%4.2f sleep:%5.2f' % (t2 - t1, sleep))
+            t = datetime.datetime.now() + datetime.timedelta(seconds=sleep)
+            print('flush:%4.2f sleep:%5.2f until %s' %
+                  (t2 - t1, sleep, t.replace(microsecond=0)))
             time.sleep(sleep)
 
 

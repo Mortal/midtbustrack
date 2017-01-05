@@ -1,3 +1,4 @@
+'''One-off program to test output of save.py'''
 import time
 import datetime
 from xml.etree import ElementTree as ET

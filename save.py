@@ -1,3 +1,4 @@
+'''One-off program to experiment with file format'''
 import datetime
 from xml.etree import ElementTree as ET
 from fetch import parse_bus, append_bus_location

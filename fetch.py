@@ -36,7 +36,8 @@ def network_wait(session):
         return
     ip = pyroute2.IPRSocket()
     ip.bind()
-    print('Cannot connect to %s - wait for network to come up' % DOMAIN)
+    print('Cannot connect to %s - wait for network to come up' % DOMAIN,
+          flush=True)
     try:
         while not connected:
             changed = False
@@ -47,10 +48,12 @@ def network_wait(session):
             # Check if we are now connected
             connected = is_connected(session)
             if not connected:
-                print('Got a new route, but still not connected')
+                print('Got a new route, but still not connected',
+                      flush=True)
     finally:
         ip.close()
-    print('Got network connection')
+    print('Got network connection',
+          flush=True)
 
 
 def get_buses_xml(session):
@@ -146,8 +149,8 @@ def append_buses(store, session):
     for bus in buses:
         append_bus_location(store, bus, request_time)
     t4 = time.time()
-    print('HTTP-GET:%4.2f XML-parse:%4.2f append:%4.2f' %
-          (t2-t1, t3-t2, t4-t3))
+    return ('HTTP-GET:%4.2f XML-parse:%4.2f append:%4.2f' %
+            (t2-t1, t3-t2, t4-t3))
 
 
 def main():
@@ -156,14 +159,15 @@ def main():
     with store, session:
         network_wait(session)
         while True:
-            append_buses(store, session)
+            times = append_buses(store, session)
             t1 = time.time()
             store.flush()
             t2 = time.time()
             sleep = INTERVAL - (time.time() % INTERVAL)
             t = datetime.datetime.now() + datetime.timedelta(seconds=sleep)
-            print('flush:%4.2f sleep:%5.2f until %s' %
-                  (t2 - t1, sleep, t.replace(microsecond=0)))
+            print('%s flush:%4.2f sleep:%5.2f until %s' %
+                  (times, t2 - t1, sleep, t.replace(microsecond=0)),
+                  flush=True)
             time.sleep(sleep)
 
 

@@ -36,9 +36,9 @@ def network_wait(session):
         return
     ip = pyroute2.IPRSocket()
     ip.bind()
+    print('Cannot connect to %s - wait for network to come up' % DOMAIN)
     try:
         while not connected:
-            print('Wait for change to IP routing table')
             changed = False
             while not changed:
                 for o in ip.get():
@@ -46,6 +46,8 @@ def network_wait(session):
                         changed = True
             # Check if we are now connected
             connected = is_connected(session)
+            if not connected:
+                print('Got a new route, but still not connected')
     finally:
         ip.close()
     print('Got network connection')

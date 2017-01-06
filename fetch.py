@@ -1,6 +1,7 @@
 import re
 import time
 import datetime
+import pyroute2
 import pandas as pd
 import requests
 from xml.etree import ElementTree as ET
@@ -18,6 +19,36 @@ COLUMNS = '''
     Id Name Updated Delay Lat Lon JourneyId Distance Line StartStation
     EndStation StartName EndName StartTime EndTime DirectionText
 '''.split()
+
+
+def is_connected(session):
+    try:
+        session.get(DOMAIN, allow_redirects=False)
+    except requests.ConnectionError:
+        return False
+    else:
+        return True
+
+
+def network_wait(session):
+    connected = is_connected(session)
+    if connected:
+        return
+    ip = pyroute2.IPRSocket()
+    ip.bind()
+    try:
+        while not connected:
+            print('Wait for change to IP routing table')
+            changed = False
+            while not changed:
+                for o in ip.get():
+                    if o['event'] == 'RTM_NEWROUTE':
+                        changed = True
+            # Check if we are now connected
+            connected = is_connected(session)
+    finally:
+        ip.close()
+    print('Got network connection')
 
 
 def get_buses_xml(session):
@@ -121,6 +152,7 @@ def main():
     store = pd.HDFStore('midtbustrack.h5')
     session = requests.Session()
     with store, session:
+        network_wait(session)
         while True:
             append_buses(store, session)
             t1 = time.time()

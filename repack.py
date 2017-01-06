@@ -1,3 +1,4 @@
+import os
 import argparse
 import datetime
 import subprocess
@@ -23,6 +24,7 @@ def main():
     args = parser.parse_args()
 
     filename = 'midtbustrack.h5'
+    initial_size = os.stat('midtbustrack.h5').st_size
     with pd.HDFStore(filename) as store:
         if args.key:
             keys = [args.key]
@@ -33,7 +35,6 @@ def main():
                 o = parse_bus_key(k)
                 date = datetime.datetime.strptime(o['date'], '%Y_%m_%d')
                 date = date.date()
-                print(k, date)
                 if date < today:
                     keys.append(k)
                 continue
@@ -42,17 +43,22 @@ def main():
             if not storer:
                 raise ValueError(k)
             if storer.format_type == 'table':
-                print("%s is a table; reading..." % k)
                 df = storer.read()
                 del storer
                 del store[k]
-                print('writing as fixed...')
                 store.put(k, df, format='fixed')
-                print('Done!')
             elif storer.format_type == 'fixed':
-                print("%s is fixed" % k)
+                # print("%s is fixed" % k)
+                pass
             else:
                 raise ValueError(storer.format_type)
+    if not args.skip_repack:
+        tmp = 'repacked.h5'
+        subprocess.check_call(('h5repack', filename, tmp))
+        os.rename(tmp, filename)
+    result_size = os.stat('midtbustrack.h5').st_size
+    print("Initial size:   %11d" % initial_size)
+    print("Resulting size: %11d" % result_size)
 
 
 if __name__ == '__main__':

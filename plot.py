@@ -101,8 +101,7 @@ def iter_journeys(filename, store, line='2A', end_station=auh, date=None):
     if date is None:
         date = datetime.date.today()
     date_str = date.strftime('%Y_%m_%d')
-    path = '/line_{line}/towards_{end_station}/date_{date}'.format(
-        line=line, end_station=end_station, date=date_str)
+    path = f'/line_{line}/towards_{end_station}/date_{date_str}'
     for k in h5ls(filename, depth=6, path=path):
         try:
             trajectory = store[k]
@@ -124,7 +123,7 @@ def find_most_recent_bus(buses, utm32_position, now):
     # buses = buses[buses.request_time <= now]
     times = predict_bus_times(buses, utm32_position, now)
     for k in sorted(times.keys(), key=lambda k: times[k]):
-        print('%s %s' % (times[k], k))
+        print(f'{times[k]} {k}')
 
 
 def predict_bus_times(buses, utm32_position, now):
@@ -139,10 +138,10 @@ def predict_bus_times(buses, utm32_position, now):
             actual_s = (actual - now).total_seconds()
             abs_diff = predicted_s - actual_s
             rel_diff = predicted_s / actual_s - 1
-            diff_str = ' (%+.0f s, %.0f%%)' % (abs_diff, 100*rel_diff)
+            diff_str = f' ({abs_diff:.0f} s, {100 * rel_diff:.0f}%)'
         else:
             diff_str = ''
-        print('%s %s%s' % (predicted, actual, diff_str))
+        print(f'{predicted} {actual}{diff_str}')
     return result
 
 

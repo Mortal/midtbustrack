@@ -12,7 +12,7 @@ LAT = '56.154437121004236'
 LON = '10.204795170878484'
 RADIUS = '11379.443078698932'
 DOMAIN = 'https://live.midttrafik.dk'
-URL = DOMAIN + '/getbuses.php?lat={lat}&lon={lon}&radius={radius}'
+URL = f'{DOMAIN}/getbuses.php?lat={LAT}&lon={LON}&radius={RADIUS}'
 
 COLUMNS = '''
     Id Name Updated Delay Lat Lon JourneyId Distance Line StartStation
@@ -41,7 +41,7 @@ def network_wait(session):
 
     ip = pyroute2.IPRSocket()
     ip.bind()
-    print('Cannot connect to %s - wait for network to come up' % DOMAIN,
+    print(f'Cannot connect to {DOMAIN} - wait for network to come up',
           flush=True)
     try:
         while not connected:
@@ -62,8 +62,7 @@ def network_wait(session):
 
 
 def get_buses_xml(session):
-    url = URL.format(lat=LAT, lon=LON, radius=RADIUS)
-    response = session.get(url)
+    response = session.get(URL)
     return ET.fromstring(response.content)
 
 
@@ -109,19 +108,16 @@ def bus_key(bus):
     line = slugify(bus['Line'])
     journey = slugify(bus['JourneyId'])
     id = slugify(bus['Id'])
-    fmt = ('/line_{line}/towards_{endstation}/date_{date}/' +
-           'id_{id}/journey_{journey}')
-    return fmt.format(
-        line=line, endstation=bus['EndStation'],
-        date=bus['StartTime'].strftime('%Y_%m_%d'),
-        id=id, journey=journey)
+    date = bus['StartTime'].strftime('%Y_%m_%d')
+    return (f'/line_{line}/towards_{bus["EndStation"]}/date_{date}/' +
+            f'id_{id}/journey_{journey}')
 
 
 def parse_bus_key(key):
     fmt = ('/line_{line}/towards_{endstation}/date_{date}/' +
            'id_{id}/journey_{journey}')
     pattern = re.sub(r'\{([a-z]+)\}', r'(?P<\1>[A-Za-z0-9_]+)', fmt)
-    mo = re.match('^%s$' % pattern, key)
+    mo = re.match(f'^{pattern}$',   key)
     if not mo:
         raise ValueError(key)
     return mo.groupdict()
@@ -154,8 +150,8 @@ def append_buses(store, session):
     for bus in buses:
         append_bus_location(store, bus, request_time)
     t4 = time.time()
-    return ('HTTP-GET:%4.2f XML-parse:%4.2f append:%4.2f' %
-            (t2-t1, t3-t2, t4-t3))
+    return f'HTTP-GET:{t2-t1:4.2f} XML-parse:{t3-t2:4.2f} append:{t4-t3:4.2f}'
+
 
 
 def main():
@@ -170,8 +166,8 @@ def main():
             t2 = time.time()
             sleep = INTERVAL - (time.time() % INTERVAL)
             t = datetime.datetime.now() + datetime.timedelta(seconds=sleep)
-            print('%s flush:%4.2f sleep:%5.2f until %s' %
-                  (times, t2 - t1, sleep, t.replace(microsecond=0)),
+            print(f'{times} flush:{t2-t1:4.2f} ' +
+                  f'sleep:{sleep:5.2f} until {t.replace(microsecond=0)}',
                   flush=True)
             time.sleep(sleep)
 

@@ -1,16 +1,24 @@
 import datetime
 import functools
+import subprocess
+import collections
+
 import pyproj
+import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-from fetch import timestamp
+from fetch import timestamp, parse_bus_key
 
 
 RADIUS_SQ = 1e-5
 
 
 def project(df):
+    try:
+        return df.x, df.y
+    except AttributeError:
+        pass
     index = df.index
     sproj = pyproj.Proj('+init=epsg:3857')
     dproj = pyproj.Proj(
@@ -44,7 +52,7 @@ def h5ls(filename, depth, path=''):
         assert path.startswith('/')
         assert not path.endswith('/')
         arg = filename + path
-        prefix = path + '/'
+        prefix = path
     else:
         arg = filename
         prefix = ''
@@ -59,17 +67,51 @@ def h5ls(filename, depth, path=''):
                 yield line
 
 
-Journey = collections.namedtuple(
+JourneyBase = collections.namedtuple(
     'Journey',
     '''trajectory Id JourneyId Name StartStation EndStation StartName EndName
     StartTime EndTime DirectionText'''.split())
 
 
-def iter_journeys(filename, store, line='2A', end_station=auh):
-    path = '/line_{line}/towards_{end_station}'.format(
-        line=line, end_station=end_station)
+class Journey(JourneyBase):
+    def attrib(self):
+        return {k: getattr(self, k) for k in self._fields
+                if k != 'trajectory'}
+
+    def until(self, now):
+        t = self.trajectory
+        t_until = t[t.index <= now]
+        return type(self)(trajectory=t_until, **self.attrib())
+
+    def last_seen(self):
+        return self.trajectory.index.max()
+
+    def last_record(self):
+        return self.trajectory.loc[self.last_seen()]
+
+    def last_updated(self):
+        return self.last_record().Updated
+
+    @property
+    def empty(self):
+        return self.trajectory.empty
+
+
+def iter_journeys(filename, store, line='2A', end_station=auh, date=None):
+    if date is None:
+        date = datetime.date.today()
+    date_str = date.strftime('%Y_%m_%d')
+    path = '/line_{line}/towards_{end_station}/date_{date}'.format(
+        line=line, end_station=end_station, date=date_str)
     for k in h5ls(filename, depth=6, path=path):
-        yield Journey(trajectory=store[k],
+        try:
+            trajectory = store[k]
+        except:
+            print(k)
+            raise
+        trajectory['x'], trajectory['y'] = project(trajectory)
+        o = parse_bus_key(k)
+        yield Journey(trajectory=trajectory, JourneyId=o['journey'],
                       **store.get_storer(k).attrs.metadata)
 
 
@@ -87,10 +129,6 @@ def find_most_recent_bus(buses, utm32_position, now):
 
 def predict_bus_times(buses, utm32_position, now):
     (result,), labels = predict_bus_times_multi(buses, utm32_position, [now])
-    # *foo, bar = ([x], atom)
-    # foo = [[x]]
-    # bar = atom
-
     print(now)
     labels_dict = {i: labels.loc[i] for i in labels.index}
     for journey_id in sorted(result.keys(), key=lambda k: result[k]):
@@ -108,25 +146,36 @@ def predict_bus_times(buses, utm32_position, now):
     return result
 
 
+def print_stats(stats):
+    df = pd.DataFrame.from_records(stats)
+    print(df)
+
+
 def plot_prediction(journeys, utm32_position, now):
     hours = 10
     nows = [now + datetime.timedelta(seconds=s)
             for s in range(-3600*hours, 0, 60)]
     result, labels = predict_bus_times_multi(journeys, utm32_position, nows)
-    labels_dict = {i: labels.loc[i] for i in labels.index}
     data = {}
     for now, predictions in zip(nows, result):
         for journey_id, t in predictions.items():
             data.setdefault(journey_id, []).append((now, t))
+    stats = []
     for journey_id, points in data.items():
         start_time = points[0][0]
         try:
-            end_time = labels_dict[journey_id]
+            end_time = labels[journey_id]
         except KeyError:
             continue
         if end_time <= now:
             plt.plot(*zip(*points))
             plt.plot([start_time, end_time], [end_time, end_time], 'k')
+        start_stats = end_time - datetime.timedelta(minutes=5)
+        relative = [(t - end_time).total_seconds() for n, t in points
+                    if n >= start_stats]
+        min, max, mean = np.min(relative), np.max(relative), np.mean(relative)
+        stats.append(dict(t=end_time, min=min, max=max, mean=mean))
+    print_stats(stats)
     plt.show()
 
 
@@ -140,55 +189,72 @@ def close_filter(bus, utm32_position, radius_sq):
     return close
 
 
+def align_trajectory(targets, journey):
+    rec = journey.last_record()
+    res = []
+    for t in targets:
+        dx = t.trajectory.x - rec.x
+        dy = t.trajectory.y - rec.y
+        d_sq = dx ** 2 + dy ** 2
+        closest = d_sq.idxmin()
+        res.append(t.trajectory.Updated.loc[closest])
+    return res
+
+
+def median(xs):
+    return sorted(xs)[len(xs) // 2]
+
+
 def predict_bus_times_multi(journeys, utm32_position, nows, radius_sq=RADIUS_SQ):
-    TODO journeys instead of buses
-    bus_by_journey = {attr['JourneyId']: bus for bus, attr in buses}
+    assert all(isinstance(j, Journey) for j in journeys)
+    # journeys_dict = {j.JourneyId: j for j in journeys}
     journey_close = {}
-    for bus, attr in buses:
-        close = bus[close_filter(bus, utm32_position, radius_sq)]
-        if not close.empty:
-            idx = close.index.min()
-            rec = close.loc[idx]
-            rec.request_time = idx
-            journey_close[attr['JourneyId']] = rec
-    journey_close = pd.DataFrame.from_records(journey_close.values(),
-                                              index=journey_close.keys())
+    journey_close_time = {}
+    for journey in journeys:
+        f = close_filter(journey.trajectory, utm32_position, radius_sq)
+        sub_trajectory = journey.trajectory[f]
+        if not sub_trajectory.empty:
+            idx = sub_trajectory.index.min()
+            rec = sub_trajectory.loc[idx]
+            journey_close_time[journey.JourneyId] = idx
+            journey_close[journey.JourneyId] = rec
+    labels = {journey_id: rec.Updated
+              for journey_id, rec in journey_close.items()}
 
     result = []
     for now in nows:
-        journey_close_now = journey_close[journey_close.request_time <= now]
-        close_journey_ids = journey_close_now.index
-        most_recent_journey = journey_close_now.request_time.idxmax()
-        most_recent_point = journey_close.loc[most_recent_journey]
-
-        most_recent = bus_by_journey[most_recent_journey]
-        most_recent_x, most_recent_y = project(most_recent)
-
-        current_buses = buses[buses.index <= now]
-        current_journeys = current_buses.groupby('JourneyId')
-        far_journey_ids = sorted(current_journeys.groups.keys() -
-                                 set(close_journey_ids))
-        far_journeys_idx = (
-            current_journeys.index.idxmax().loc[far_journey_ids])
-        far_journeys_point = buses.loc[far_journeys_idx].set_index('JourneyId')
-        far_journeys_x, far_journeys_y = project(far_journeys_point)
-
-        result_now = {}
+        print(now)
+        close_journey_times_now = {
+            j: t for j, t in journey_close_time.items() if t <= now}
+        close_journeys_now = sorted(
+            (j for j in journeys if j.JourneyId in close_journey_times_now),
+            key=lambda j: close_journey_times_now[j.JourneyId],
+            reverse=True)
+        upcoming_journeys = []
         recent_threshold = now - datetime.timedelta(seconds=60)
-        for journey_id in far_journey_ids:
-            t = far_journeys_point.loc[journey_id].Updated
-            if t < recent_threshold:
+        result_now = {}
+        for journey in journeys:
+            if journey.JourneyId in close_journey_times_now.keys():
+                # This journey is used as benchmark
                 continue
-            dx = far_journeys_x[journey_id] - most_recent_x
-            dy = far_journeys_y[journey_id] - most_recent_y
-            dist_sq = dx ** 2 + dy ** 2
-            closest = dist_sq.idxmin()
-            closest_time = buses.loc[closest].Updated
-            t_diff = t - closest_time
-            predicted = most_recent_point.Updated + t_diff
-            result_now[journey_id] = predicted
+            journey = journey.until(now)
+            if journey.empty:
+                # No trajectory data
+                continue
+            if journey.last_seen() < recent_threshold:
+                # No current data
+                continue
+            upcoming_journeys.append(journey)
+            n = 5
+            alignment = align_trajectory(
+                close_journeys_now[:5], journey)
+            journey_updated = journey.last_updated()
+            predictions = [
+                journey_updated + (labels[j.JourneyId] - a)
+                for j, a in zip(close_journeys_now, alignment)]
+            result_now[journey.JourneyId] = median(predictions[:n])
         result.append(result_now)
-    return result, journey_close.Updated
+    return result, labels
 
 
 def main():

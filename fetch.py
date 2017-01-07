@@ -1,7 +1,6 @@
 import re
 import time
 import datetime
-import pyroute2
 import pandas as pd
 import requests
 from xml.etree import ElementTree as ET
@@ -34,6 +33,12 @@ def network_wait(session):
     connected = is_connected(session)
     if connected:
         return
+
+    try:
+        import pyroute2
+    except ImportError:
+        raise Exception('pyroute2 not installed')
+
     ip = pyroute2.IPRSocket()
     ip.bind()
     print('Cannot connect to %s - wait for network to come up' % DOMAIN,
